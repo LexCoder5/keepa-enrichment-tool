@@ -556,14 +556,18 @@
     document.querySelector("#domainMode option[value=queue]").textContent = `Main queue (${n(d.pending)})`;
     document.querySelector("#domainMode option[value=skipped]").textContent = `Skipped for now (${n(d.skipped || 0)})`;
     document.getElementById("tabBtnStats").textContent = `📊 Stats (${n(d.found)})`; // total domains found so far
-    // Storage flag: the database is shared with the CRM (500 MB free-plan limit). Warn from 350 MB.
+    // Storage flag, revised 2026-11-09 (real bug found): this was still warning off the old 500 MB free-plan
+    // ceiling from before the project upgraded to Supabase Pro (2026-10-31, see README's 2026-10-31 changelog
+    // entry) -- Pro includes 8 GB, not 500 MB, so this alert had been firing as a false alarm (431/500 MB
+    // looked critical; it's actually ~5% of real capacity). Warn from 6000 MB (75% of 8000), same proportion
+    // the old 350/500 warning used.
     const bar = document.getElementById("dbbar");
     if (d.db_size_mb !== null && d.db_size_mb !== undefined) {
       const mb = Number(d.db_size_mb);
-      bar.className = mb >= 350 ? "dbbar warn" : "dbbar";
-      bar.textContent = mb >= 350
-        ? `⚠ Database at ${mb} MB of 500 MB — tell Claude so we can free space`
-        : `Database: ${mb} / 500 MB`;
+      bar.className = mb >= 6000 ? "dbbar warn" : "dbbar";
+      bar.textContent = mb >= 6000
+        ? `⚠ Database at ${mb} MB of 8000 MB — tell Claude so we can free space`
+        : `Database: ${mb} / 8000 MB`;
     }
     document.getElementById("stats").innerHTML = `
       <div class="stat"><div class="num">${n(d.total_icp)}</div><div class="lbl">Total ICP</div></div>
@@ -1118,7 +1122,7 @@ Rules:
   const LABELS = {
     keepa_tokens: "Keepa tokens", sweep_focus: "Sweep focus (marketplace)", sweep_band_us: "US sweep band", sweep_band_uk: "UK sweep band", bands_advanced_since_last_audit: "Bands advanced since last audit",
     sellers_saved_last_2h: "Sellers saved (last 2 h)", outreach_queued: "Outreach queued", seller_errors: "Seller errors",
-    db_mb: "Database (MB of 500)", hunter_credits_left: "Hunter credits left", email_finding: "Email finding",
+    db_mb: "Database (MB of 8000)", hunter_credits_left: "Hunter credits left", email_finding: "Email finding",
   };
   async function loadHealthTab() {
     const box = document.getElementById("healthContent");
