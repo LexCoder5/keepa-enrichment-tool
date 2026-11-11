@@ -1080,17 +1080,34 @@ Rules:
       if (!m) { unmatchedLines++; continue; }
       byNumber[Number(m[1])] = ((byNumber[Number(m[1])] || "") + " " + m[2]).trim();
     }
+    // Bulk-tab-only domain-match guard (2026-11-11, user request): ChatGPT (or whoever) can hand back an
+    // email on a totally different domain than the one asked about — unlike the manual single-lead tab
+    // (same submit_manual_emails RPC, separate button/code path, untouched), nobody reviews these one at a
+    // time, so a bad domain can slip straight into the pipeline. Subdomains count as a match (mail.foo.com
+    // for foo.com) since that's a real, correct pattern, not a mismatch.
+    const emailDomainMatches = (email, rowDomain) => {
+      const ed = (email.split("@")[1] || "").toLowerCase().replace(/^www\./, "");
+      const rd = (rowDomain || "").toLowerCase().replace(/^www\./, "");
+      return !!ed && !!rd && (ed === rd || ed.endsWith("." + rd));
+    };
     const lines = [];
     for (let i = 0; i < bulkRows.length; i++) {
       const row = bulkRows[i];
       const raw = (byNumber[i + 1] || "").trim();
-      const emails = raw ? [...new Set(raw.split(/[\s,;]+/).map((e) => e.trim().toLowerCase()).filter((e) => e.includes("@")))] : [];
+      const parsed = raw ? [...new Set(raw.split(/[\s,;]+/).map((e) => e.trim().toLowerCase()).filter((e) => e.includes("@")))] : [];
+      const rejected = parsed.filter((e) => !emailDomainMatches(e, row.domain));
+      // Any-mismatch-fails-the-whole-row (2026-11-11, user request): don't partially save the matching
+      // emails on a row that also has a wrong-domain one — treat the whole row as "couldn't find it" and
+      // skip it, same as a blank line. Nothing gets injected from a row with any mismatch at all.
+      const emails = rejected.length ? [] : parsed;
       if (!emails.length) {
-        // Blank (or junk) line = couldn't find it. Queue mode: move it to the Skipped bucket (same meaning as the
-        // "Skip for now" button elsewhere) so it stops reappearing in Main queue batches. Skipped mode: it's
-        // already skipped — just release the claim so a later batch (after a restart) can show it again.
-        if (bulkMode === "skipped") { await supabaseClient.rpc("release_email_lead", { p_company_id: row.company_id }); lines.push({ domain: row.domain, msg: "left in Skipped bucket" }); }
-        else { await supabaseClient.rpc("skip_email_lead_for_now", { p_company_id: row.company_id, p_worker: worker }); lines.push({ domain: row.domain, msg: "moved to Skipped for now" }); }
+        // Blank/junk line, OR any pasted email was a domain mismatch = couldn't find it. Queue mode: move it to
+        // the Skipped bucket (same meaning as the "Skip for now" button elsewhere) so it stops reappearing in
+        // Main queue batches. Skipped mode: it's already skipped — just release the claim so a later batch
+        // (after a restart) can show it again.
+        const why = rejected.length ? ` (rejected, wrong domain: ${rejected.join(", ")})` : "";
+        if (bulkMode === "skipped") { await supabaseClient.rpc("release_email_lead", { p_company_id: row.company_id }); lines.push({ domain: row.domain, msg: "left in Skipped bucket" + why }); }
+        else { await supabaseClient.rpc("skip_email_lead_for_now", { p_company_id: row.company_id, p_worker: worker }); lines.push({ domain: row.domain, msg: "moved to Skipped for now" + why }); }
         continue;
       }
       const { data, error } = await supabaseClient.rpc("submit_manual_emails", { p_company_id: row.company_id, p_emails: emails, p_worker: worker });
