@@ -948,7 +948,7 @@
       <div class="status" id="emailStatus"></div>
       <div class="actions-row">
         <button id="emailSkipBtn" type="button">${emailMode === "skipped" ? "Next skipped lead" : emailMode === "unfindable" ? "Next unfindable lead" : "Skip for now"}</button>
-        ${emailMode === "unfindable" ? "" : `<button id="emailNotFoundBtn">Couldn't find any — mark as not findable</button>`}
+        ${(emailMode === "verify_failed" || emailMode === "skipped") ? `<button id="emailNotFoundBtn">Couldn't find any — mark as not findable</button>` : ""}
         <button id="emailSaveBtn" style="background: var(--accent); color: white;">Save</button>
       </div>
       </div></div>`;
