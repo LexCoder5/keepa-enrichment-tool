@@ -235,6 +235,7 @@
   <div class="tabs">
     <button class="tab active" id="tabBtnDomains" type="button">🌐 Domains</button>
     <button class="tab" id="tabBtnVerifier" type="button">✅ Verifier</button>
+    <button class="tab" id="tabBtnManualVerify" type="button">🔍 Verifier (Manual Domains)</button>
     <button class="tab" id="tabBtnEmails" type="button">📧 Emails</button>
     <button class="tab" id="tabBtnBulkEmails" type="button">📬 Bulk Emails</button>
     <!-- Amazon Bees tab removed 2026-10-17: client discontinued 2026-10-08, data resale program ended. See
@@ -262,6 +263,16 @@
   <div class="stats" id="verifyStats"></div>
   <div id="verifyContent" class="card"><div class="loading-state">Loading…</div></div>
   <p class="counter" id="verifyCounter"></p>
+  </div>
+
+  <div id="tab-manualverify" hidden>
+  <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:12px;margin-bottom:12px;font-weight:600;color:#b91c1c;">
+    ⚠️ Only to be worked by Tushar. These are domains a teammate submitted by hand that our AI check couldn't confirm — Tushar's own second look is the one that decides them.
+  </div>
+  <p class="subtitle">A human already submitted this domain; the AI just couldn't confirm it (reason shown below). Check the candidate site yourself, then say yes or no.</p>
+  <div class="stats" id="manualVerifyStats"></div>
+  <div id="manualVerifyContent" class="card"><div class="loading-state">Loading…</div></div>
+  <p class="counter" id="manualVerifyCounter"></p>
   </div>
 
   <div id="tab-stats" hidden>
@@ -705,6 +716,115 @@
     renderVerifySeller(data[0]);
   }
 
+  // ================= Verifier (Manual Domains) tab =================
+  // Separate from the Verifier tab above on purpose (explicit user call, 2026-11-18, "dont put into same
+  // verifier pls") — reviews domain_status='manual_needs_review': a teammate already submitted a specific
+  // domain by hand, but our AI check (VAT/trade-number + product-match) couldn't confirm it. Confirm -> found,
+  // keeping the ORIGINAL submitter's credit (domain_by untouched) — Tushar is a second look, not the finder.
+  // Reject -> back to the normal Domains queue for a fresh lookup, same recovery as a rejected auto-guess.
+  let manualVerifyCurrent = null;
+  let manualVerifyHandled = 0;
+  const manualVerifyContent = document.getElementById("manualVerifyContent");
+  const manualVerifyCounter = document.getElementById("manualVerifyCounter");
+
+  async function loadManualVerifyStats() {
+    const { data, error } = await supabaseClient.rpc("get_manual_review_stats");
+    if (error || !data || !data[0]) return;
+    const d = data[0];
+    const n = (v) => Number(v).toLocaleString();
+    document.getElementById("tabBtnManualVerify").textContent = `🔍 Verifier (Manual Domains) (${n(d.pending)})`;
+    document.getElementById("manualVerifyStats").innerHTML = `
+      <div class="stat pending"><div class="num">${n(d.pending)}</div><div class="lbl">Waiting for Tushar</div></div>
+      <div class="stat found"><div class="num">${n(d.confirmed_lifetime)}</div><div class="lbl">Verified (Manual Domain) — lifetime</div></div>
+      <div class="stat"><div class="num" style="color:#b45309">${n(d.rejected_lifetime)}</div><div class="lbl">Rejected (Manual Domain) — lifetime</div></div>`;
+  }
+
+  function renderManualVerifyEmpty() {
+    manualVerifyContent.innerHTML = `<div class="empty-state">Nothing waiting for review right now.</div>`;
+    manualVerifyCounter.textContent = "";
+  }
+
+  function renderManualVerifySeller(s) {
+    manualVerifyCurrent = s;
+    manualVerifyContent.innerHTML = `
+      <div class="lead-grid"><div class="lead-info">
+      <div class="revenue">${formatRevenue(s.estimated_monthly_revenue_min_usd)}</div>
+      <div class="business-name">${s.seller_name || "(no name)"}</div>
+
+      <div class="field seller-link">
+        <span class="field-label">Seller link</span>
+        <a class="val" href="${s.seller_link}" target="_blank" rel="noopener">${s.seller_link}</a>
+      </div>
+      <div class="field">
+        <span class="field-label">Business</span><span class="val">${s.business_name || "n/a"}</span>
+      </div>
+      <div class="field address-line">
+        <span class="field-label">Address</span><span class="val">${formatAddress(s.address)}${s.address_country ? " (" + s.address_country + ")" : ""}</span>
+      </div>
+      ${(s.vat_id || s.trade_number) ? `<div class="field">
+        <span class="field-label">VAT / Trade number</span>
+        <span class="val">${esc([s.vat_id, s.trade_number].filter(Boolean).join(" · "))}</span>
+        ${s.trade_number ? `<a href="https://find-and-update.company-information.service.gov.uk/search?q=${encodeURIComponent(s.trade_number)}" target="_blank" rel="noopener" style="margin-left:8px;">Companies House search</a>` : ""}
+      </div>` : ""}
+      <div class="field">
+        <span class="field-label">Brand</span><span class="val">${s.top_product_brand || "n/a"}</span>
+      </div>
+      ${s.top_product_title ? `<div class="field"><span class="field-label">Product</span><span class="val">${s.top_product_title}</span></div>` : ""}
+      <div class="field"><span class="field-label">Originally submitted by</span><span class="val">${esc(s.domain_by || "n/a")}</span></div>
+
+      </div>
+      <div class="lead-actions">
+      <div class="field" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:12px;">
+        <span class="field-label">Submitted domain</span>
+        <a class="val" href="https://${s.domain_candidate}" target="_blank" rel="noopener" style="font-size:17px;font-weight:700;">${s.domain_candidate}</a>
+      </div>
+      <div class="field" style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:12px;">
+        <span class="field-label">Why our AI couldn't confirm it</span>
+        <span class="val">${esc(s.manual_review_reason || "n/a")}</span>
+      </div>
+      <div class="status" id="manualVerifyStatus"></div>
+
+      <div class="actions-row">
+        <button id="manualVerifySkipBtn" type="button">Skip for now</button>
+        <button id="manualVerifyRejectBtn" type="button" style="background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;">✗ Wrong — reject</button>
+        <button id="manualVerifyConfirmBtn" type="button" style="background:var(--green);color:#fff;">✓ Correct — confirm</button>
+      </div>
+      </div></div>
+    `;
+
+    const status = document.getElementById("manualVerifyStatus");
+    document.getElementById("manualVerifyConfirmBtn").addEventListener("click", async () => {
+      document.getElementById("manualVerifyConfirmBtn").disabled = true;
+      const { error } = await supabaseClient.rpc("confirm_manual_review_domain", { p_seller_id: manualVerifyCurrent.seller_id, p_worker: worker });
+      if (error) { status.textContent = "Error: " + error.message; status.className = "status error"; document.getElementById("manualVerifyConfirmBtn").disabled = false; return; }
+      manualVerifyHandled++;
+      loadNextManualVerify();
+    });
+    document.getElementById("manualVerifyRejectBtn").addEventListener("click", async () => {
+      document.getElementById("manualVerifyRejectBtn").disabled = true;
+      const { error } = await supabaseClient.rpc("reject_manual_review_domain", { p_seller_id: manualVerifyCurrent.seller_id, p_worker: worker });
+      if (error) { status.textContent = "Error: " + error.message; status.className = "status error"; document.getElementById("manualVerifyRejectBtn").disabled = false; return; }
+      manualVerifyHandled++;
+      loadNextManualVerify();
+    });
+    document.getElementById("manualVerifySkipBtn").addEventListener("click", async () => {
+      document.getElementById("manualVerifySkipBtn").disabled = true;
+      await supabaseClient.rpc("release_seller", { p_seller_id: manualVerifyCurrent.seller_id });
+      loadNextManualVerify();
+    });
+
+    manualVerifyCounter.textContent = `${manualVerifyHandled} handled this session`;
+  }
+
+  async function loadNextManualVerify() {
+    loadManualVerifyStats();
+    manualVerifyContent.innerHTML = `<div class="loading-state">Loading…</div>`;
+    const { data, error } = await supabaseClient.rpc("get_next_manual_verify_seller", { p_worker: worker });
+    if (error) { manualVerifyContent.innerHTML = `<div class="empty-state">Error loading queue: ${error.message}</div>`; return; }
+    if (!data || data.length === 0) { renderManualVerifyEmpty(); return; }
+    renderManualVerifySeller(data[0]);
+  }
+
   // ================= Emails tab =================
   const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   // Narrow table column headers only — "Verifier - Auto"/"Verifier - Manual" are too wide next to short
@@ -731,6 +851,7 @@
   function showTab(which) {
     document.getElementById("tab-domains").hidden = which !== "domains";
     document.getElementById("tab-verifier").hidden = which !== "verifier";
+    document.getElementById("tab-manualverify").hidden = which !== "manualverify";
     document.getElementById("tab-emails").hidden = which !== "emails";
     document.getElementById("tab-bulkemails").hidden = which !== "bulkemails";
     document.getElementById("tab-stats").hidden = which !== "stats";
@@ -741,6 +862,7 @@
     if (which === "health") loadHealthTab();
     document.getElementById("tabBtnDomains").classList.toggle("active", which === "domains");
     document.getElementById("tabBtnVerifier").classList.toggle("active", which === "verifier");
+    document.getElementById("tabBtnManualVerify").classList.toggle("active", which === "manualverify");
     document.getElementById("tabBtnEmails").classList.toggle("active", which === "emails");
     document.getElementById("tabBtnBulkEmails").classList.toggle("active", which === "bulkemails");
     // Fixed 2026-10-11: these used to lazy-load ONCE and never refetch on a later switch back to the tab —
@@ -749,9 +871,11 @@
     // Every switch now re-fetches fresh, same as Stats/Health already did.
     if (which === "domains") loadNext();
     if (which === "verifier") loadNextVerify();
+    if (which === "manualverify") loadNextManualVerify();
     if (which === "emails") loadNextEmail();
     if (which === "bulkemails") loadBulkBatch();
   }
+  document.getElementById("tabBtnManualVerify").addEventListener("click", () => showTab("manualverify"));
   document.getElementById("tabBtnDomains").addEventListener("click", () => showTab("domains"));
   document.getElementById("tabBtnVerifier").addEventListener("click", () => showTab("verifier"));
   document.getElementById("tabBtnEmails").addEventListener("click", () => showTab("emails"));
@@ -1539,6 +1663,7 @@ Rules:
     showWho();
     loadNext();
     loadVerifyStats(); // fills the count on the Verifier tab button right away
+    loadManualVerifyStats(); // same, for the Verifier (Manual Domains) tab button
     loadEmailStats(); // fills the count on the Emails tab button right away
     loadBulkStats(); // fills the count on the Bulk Emails tab button right away
     initMilestones();
