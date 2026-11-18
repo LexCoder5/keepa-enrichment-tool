@@ -287,7 +287,7 @@
 
   <div id="tab-emails" hidden>
     <p class="subtitle">Leads where email finding failed. Search for an email yourself (website, LinkedIn, contact page) and paste it. Every email is verified automatically before it can be pushed.</p>
-    <div class="modebar">Showing <select id="emailMode"><option value="queue">Main queue</option><option value="verify_failed">Verification failed</option><option value="skipped">Skipped</option></select></div>
+    <div class="modebar">Showing <select id="emailMode"><option value="queue">Main queue</option><option value="verify_failed">Verification failed</option><option value="skipped">Skipped</option><option value="unfindable">Unfindable</option></select></div>
     <div class="stats" id="emailStats"></div>
     <div id="emailContent" class="card"><div class="loading-state">Loading…</div></div>
     <p class="counter" id="emailCounter"></p>
@@ -897,6 +897,7 @@
     document.querySelector("#emailMode option[value=queue]").textContent = `Main queue (${n(d.queue_no_email)})`;
     document.querySelector("#emailMode option[value=verify_failed]").textContent = `Verification failed (${n(d.queue_verify_failed)})`;
     document.querySelector("#emailMode option[value=skipped]").textContent = `Skipped (${n(d.skipped || 0)})`;
+    document.querySelector("#emailMode option[value=unfindable]").textContent = `Unfindable (${n(d.none_found || 0)})`;
     document.getElementById("emailStats").innerHTML = `
       <div class="stat pending"><div class="num">${n(d.in_queue)}</div><div class="lbl">Need an email</div></div>
       <div class="stat"><div class="num">${n(d.pending_verification)}</div><div class="lbl">Verifying</div></div>
@@ -930,7 +931,7 @@
       <div class="lead-grid"><div class="lead-info">
       <div class="revenue">${rev}</div>
       <div class="business-name">${esc(l.company_name || l.brand || "(no name)")}</div>
-      <div class="field"><span class="pill">${l.status === "no_email" ? "no email found" : l.status === "verify_failed" ? "found, none passed verification" : "manual email failed verification"}</span></div>
+      <div class="field"><span class="pill">${l.status === "no_email" ? "no email found" : l.status === "verify_failed" ? "found, none passed verification" : l.status === "manual_no_email" ? "marked unfindable by a human" : "manual email failed verification"}</span></div>
       <div class="field"><span class="field-label">Website</span><a href="https://${esc(l.domain)}" target="_blank" rel="noopener">${esc(l.domain)}</a></div>
       <div class="field"><span class="field-label">Find founder email</span><a href="https://www.google.com/search?q=${encodeURIComponent(l.domain + " founder email")}" target="_blank" rel="noopener">Google: "${esc(l.domain)} founder email"</a></div>
       <div class="field seller-link"><span class="field-label">Seller link</span><a href="${esc(l.seller_link)}" target="_blank" rel="noopener">${esc(l.seller_link)}</a></div>
@@ -946,8 +947,8 @@
       <textarea id="emailInput" placeholder="Paste one or more NEW emails — one per line, or separated by commas"></textarea>
       <div class="status" id="emailStatus"></div>
       <div class="actions-row">
-        <button id="emailSkipBtn" type="button">${emailMode === "skipped" ? "Next skipped lead" : "Skip for now"}</button>
-        <button id="emailNotFoundBtn">Couldn't find any — mark as not findable</button>
+        <button id="emailSkipBtn" type="button">${emailMode === "skipped" ? "Next skipped lead" : emailMode === "unfindable" ? "Next unfindable lead" : "Skip for now"}</button>
+        ${emailMode === "unfindable" ? "" : `<button id="emailNotFoundBtn">Couldn't find any — mark as not findable</button>`}
         <button id="emailSaveBtn" style="background: var(--accent); color: white;">Save</button>
       </div>
       </div></div>`;
@@ -1002,6 +1003,13 @@
     });
     document.getElementById("emailSkipBtn").addEventListener("click", async () => {
       document.getElementById("emailSkipBtn").disabled = true;
+      if (emailMode === "unfindable") {
+        // Already marked unfindable — just move on to the next one, no status change (skip_email_lead_for_now
+        // wouldn't match this status anyway, same reasoning as mark_email_lead_not_found below).
+        await supabaseClient.rpc("release_email_lead", { p_company_id: emailCurrent.company_id });
+        loadNextEmail();
+        return;
+      }
       // Re-skipping from inside the Skipped tab bumps skipped_at to now() too (not just release_email_lead) —
       // user's explicit ask (2026-10-12): a lead you looked at again and still couldn't solve should go to the
       // BACK of the skipped queue, not keep reappearing at the front forever on its original skip timestamp.
@@ -1009,7 +1017,7 @@
       if (emailMode === "skipped") emailSkippedSeen.push(emailCurrent.company_id);
       loadNextEmail();
     });
-    confirmClick(nfBtn, async () => {
+    if (nfBtn) confirmClick(nfBtn, async () => {
       nfBtn.disabled = true;
       const { error } = await supabaseClient.rpc("mark_email_lead_not_found", { p_company_id: emailCurrent.company_id });
       if (error) { status.textContent = error.message; status.className = "status error"; nfBtn.disabled = false; return; }
